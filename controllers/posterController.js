@@ -90,7 +90,7 @@ export const uploadPoster = async (req, res) => {
 // 2. Generate posters for customer by category replacing placeholders with customer data
 export const generatePostersForCustomerByCategory = async (req, res) => {
   try {
-    const { category, customerId } = req.body;
+    const { category, customerId, posterId } = req.body;
     if (!category || !customerId) {
       return res
         .status(400)
@@ -102,11 +102,17 @@ export const generatePostersForCustomerByCategory = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    const posters = await Poster.find({ category }).sort({ createdAt: -1 });
+    // Use posterId to filter if provided, otherwise get all posters in category
+    const query = { category };
+    if (posterId) {
+      query._id = posterId;
+    }
+    
+    const posters = await Poster.find(query).sort({ createdAt: -1 });
     if (!posters.length) {
       return res
         .status(404)
-        .json({ message: "No posters found for this category" });
+        .json({ message: posterId ? "Poster not found" : "No posters found for this category" });
     }
 
     const outputFolder = path.join("uploads", "generated");
@@ -172,7 +178,7 @@ export const generatePostersForCustomerByCategory = async (req, res) => {
           </svg>
         `;
 
-        const fileName = `${customer._id}_${Date.now()}_${poster._id}.png`;
+        const fileName = `${customer._id}_${poster._id}.png`;
         const outputPath = path.join(outputFolder, fileName);
 
         // 📸 Composite image
