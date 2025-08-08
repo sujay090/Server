@@ -197,7 +197,7 @@ export const generatePostersForCustomerByCategory = async (req, res) => {
 
         generatedPosters.push({
           _id: saved._id,
-          imageUrl: `http://localhost:5000/uploads/generated/${fileName}`,
+          imageUrl: `https://marketing.gs3solution.us/uploads/generated/${fileName}`,
           // "https://marketing.gs3solution.us"
         });
       } catch (innerErr) {

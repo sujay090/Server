@@ -1,9 +1,13 @@
 import Schedule from "../models/Schedule.js";
+import GeneratedPoster from "../models/GeneratedPoster.js";
+import mongoose from "mongoose";
 import nodeSchedule from "node-schedule";
 import axios from "axios";
 import dotenv from "dotenv";
 import moment from "moment-timezone";
 import { DEFAULT_TIMEZONE, convertToIST, formatForIST } from "../config/timezone.js";
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 const postSchedule = (
@@ -127,9 +131,58 @@ export const getScheduleByCustomer = async (req, res) => {
 
 export const getAllSchedules = async (req, res) => {
   try {
-    const schedules = await Schedule.find()
-      .populate("customerId", "companyName") // ✅ Fetch customer name
-      .populate("posterId", "title"); // Optional: fetch poster title
+    const { includePosters } = req.query;
+    
+    // Get base URL for images
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    
+    let query = Schedule.find().populate("customerId", "companyName phoneNumber");
+    
+    // If poster info is requested, populate both poster types
+    if (includePosters === 'true') {
+      query = query
+        .populate("posterId", "title imageUrl _id")
+        .populate("generatedPosterId", "generatedImagePath _id customer category originalPosterId");
+    }
+    
+    const schedules = await query;
+
+    // Since GeneratedPoster collection is empty, we'll work directly with files on disk
+    const generatedPosterLookup = {};
+    if (includePosters === 'true') {
+      // Read all files from the generated directory and create lookup
+      try {
+        const uploadsDir = path.join(process.cwd(), 'uploads', 'generated');
+        const files = fs.readdirSync(uploadsDir).filter(file => file.endsWith('.png'));
+        
+        files.forEach(filename => {
+          // Extract customer ID from filename (format: customerId_posterId.png)
+          const parts = filename.replace('.png', '').split('_');
+          if (parts.length >= 2) {
+            const customerId = parts[0];
+            const posterId = parts.slice(1).join('_'); // In case there are multiple underscores
+            
+            // For now, we'll assume all are 'offers' category since we don't have DB data
+            // This could be enhanced by parsing the filename or checking file metadata
+            const key = `${customerId}_offers`;
+            if (!generatedPosterLookup[key]) {
+              generatedPosterLookup[key] = [];
+            }
+            generatedPosterLookup[key].push({
+              _id: posterId, // Use the posterId part as _id
+              generatedImagePath: filename,
+              category: 'offers',
+              filename: filename
+            });
+          }
+        });
+        
+        console.log('File-based Generated Poster Lookup created for files:', files.length);
+        console.log('Lookup keys:', Object.keys(generatedPosterLookup));
+      } catch (error) {
+        console.error('Error reading generated files directory:', error);
+      }
+    }
 
     // ✅ Add timezone information to response for frontend debugging
     const schedulesWithTimezone = schedules.map(schedule => {
@@ -145,21 +198,122 @@ export const getAllSchedules = async (req, res) => {
       }
       // Compute IST display from UTC date/time
       const dateIST = formatForIST(new Date(`${dateUTC}T${timeUTC}:00Z`));
-      return {
+      
+      const result = {
         ...schedule.toObject(),
         dateUTC,
         timeUTC,
         dateIST
       };
+      
+      // Add poster info if available (try multiple approaches)
+      if (schedule.generatedPosterId) {
+        result.poster = {
+          _id: schedule.generatedPosterId._id,
+          imageUrl: `${baseUrl}/uploads/generated/${schedule.generatedPosterId.generatedImagePath.split('/').pop()}`,
+          type: 'generated'
+        };
+        console.log(`Found generatedPosterId for schedule ${schedule._id}:`, result.poster);
+      } else if (schedule.posterId) {
+        result.poster = {
+          _id: schedule.posterId._id,
+          imageUrl: schedule.posterId.imageUrl.startsWith('http') ? schedule.posterId.imageUrl : `${baseUrl}${schedule.posterId.imageUrl}`,
+          title: schedule.posterId.title,
+          type: 'original'
+        };
+        console.log(`Found posterId for schedule ${schedule._id}:`, result.poster);
+      } else {
+        // Try to find matching generated poster by customer and category
+        const lookupKey = `${schedule.customerId._id}_${schedule.category.toLowerCase()}`;
+        const matchingPosters = generatedPosterLookup[lookupKey];
+        console.log(`Looking for poster with key: ${lookupKey}, found:`, matchingPosters ? matchingPosters.length : 0);
+        
+        if (matchingPosters && matchingPosters.length > 0) {
+          const poster = matchingPosters[0]; // Use the first matching poster
+          const filename = poster.filename;
+          
+          result.poster = {
+            _id: poster._id,
+            imageUrl: `${baseUrl}/uploads/generated/${filename}`,
+            type: 'generated',
+            category: poster.category
+          };
+          console.log(`File-based matched poster for schedule ${schedule._id}, using filename: ${filename}`);
+        } else {
+          console.log(`No poster file found for schedule ${schedule._id} (customer: ${schedule.customerId?.companyName}, category: ${schedule.category})`);
+        }
+      }
+      
+      return result;
     });
 
     console.log("All scheduled jobs:");
     console.log(Object.keys(nodeSchedule.scheduledJobs));
     console.log(`Returning ${schedulesWithTimezone.length} schedules with timezone info`);
     
+    // Debug logging for posters
+    console.log("Poster info debug:", schedulesWithTimezone.map(s => ({
+      scheduleId: s._id,
+      customer: s.customerId?.companyName,
+      category: s.category,
+      posterId: s.posterId,
+      generatedPosterId: s.generatedPosterId,
+      poster: s.poster
+    })));
+    
     res.json(schedulesWithTimezone);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching schedules", error });
+    console.error("Error in getAllSchedules:", error);
+    res.status(500).json({ message: "Error fetching schedules", error: error.message });
+  }
+};
+
+export const updateSchedule = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    // Find the existing schedule
+    const existingSchedule = await Schedule.findById(id);
+    if (!existingSchedule) {
+      return res.status(404).json({ message: "Schedule not found" });
+    }
+
+    // Update the schedule
+    const updatedSchedule = await Schedule.findByIdAndUpdate(id, updateData, { 
+      new: true 
+    }).populate("customerId", "companyName phoneNumber").populate("posterId", "title imageUrl _id");
+
+    // Cancel existing scheduled job if it exists
+    const jobKey = `schedule-${id}`;
+    if (nodeSchedule.scheduledJobs[jobKey]) {
+      nodeSchedule.scheduledJobs[jobKey].cancel();
+      delete nodeSchedule.scheduledJobs[jobKey];
+    }
+
+    // Reschedule with updated time if the schedule is in the future
+    const scheduleDate = new Date(`${updatedSchedule.date}T${updatedSchedule.time}:00`);
+    if (scheduleDate > new Date()) {
+      const customerPhoneNumber = updatedSchedule.customerId?.phoneNumber;
+      const posterImageUrl = updatedSchedule.posterId?.imageUrl;
+      
+      if (customerPhoneNumber && posterImageUrl) {
+        postSchedule(
+          scheduleDate,
+          `Scheduled post for ${updatedSchedule.customerId.companyName}`,
+          [posterImageUrl],
+          customerPhoneNumber
+        );
+      }
+    }
+
+    res.json({ 
+      message: "Schedule updated successfully", 
+      schedule: updatedSchedule 
+    });
+  } catch (error) {
+    console.error("Error updating schedule:", error);
+    res.status(500).json({ message: "Error updating schedule", error: error.message });
   }
 };
 

@@ -17,6 +17,7 @@ import posterRoutes from "./routes/posterRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import scheduleRoutes from "./routes/scheduleRoutes.js";
 import timezoneRoutes from "./routes/timezoneRoutes.js";
+import testRoutes from "./routes/testRoutes.js";
 import "./controllers/cronJobs.js";
 
 // Initialize database and timezone
@@ -31,6 +32,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
+      "http://localhost:3001",
       "https://poster-generetorapp-frontend.onrender.com",
       "https://post-generate-app-1.onrender.com"
     ],
@@ -52,6 +54,7 @@ app.use("/api/posters", posterRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/schedules", scheduleRoutes);
 app.use("/api/timezone", timezoneRoutes);
+app.use("/api/test", testRoutes);
 // new the cron job
 
 const PORT = process.env.PORT || 5000;

@@ -82,9 +82,12 @@ cron.schedule("* * * * *", async () => {
           continue;
         }
 
-        const mediaUrl = `https://maxhub.center/${genaratePoster.generatedImagePath}`;
-
-        console.log(`Sending media URL: ${mediaUrl}`);
+        // Use the actual generated poster URL
+        const baseUrl = process.env.SERVER_URL || process.env.BASE_URL || "https://marketing.gs3solution.us";
+        const mediaUrl = `${baseUrl}/${genaratePoster.generatedImagePath}`;
+        
+        console.log(`📸 Sending poster: ${mediaUrl}`);
+        
         await sendWhatsApp(phoneNumber, mediaUrl);
 
         schedule.status = "Sent";

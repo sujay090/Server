@@ -10,7 +10,10 @@ const scheduleSchema = new mongoose.Schema({
   posterId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Poster',
-    required: true,
+  },
+  generatedPosterId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'GeneratedPoster',
   },
   category: {
     type: String,
